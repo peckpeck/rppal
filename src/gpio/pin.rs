@@ -193,52 +193,6 @@ macro_rules! impl_output {
     };
 }
 
-macro_rules! impl_reset_on_drop {
-    () => {
-        /// Returns the value of `reset_on_drop`.
-        pub fn reset_on_drop(&self) -> bool {
-            self.reset_on_drop
-        }
-
-        /// When enabled, resets the pin's mode to its original state and disables the
-        /// built-in pull-up/pull-down resistors when the pin goes out of scope.
-        /// By default, this is set to `true`.
-        ///
-        /// ## Note
-        ///
-        /// Drop methods aren't called when a process is abnormally terminated, for
-        /// instance when a user presses <kbd>Ctrl</kbd> + <kbd>C</kbd>, and the `SIGINT` signal
-        /// isn't caught. You can catch those using crates such as [`simple_signal`].
-        ///
-        /// [`simple_signal`]: https://crates.io/crates/simple-signal
-        pub fn set_reset_on_drop(&mut self, reset_on_drop: bool) {
-            self.reset_on_drop = reset_on_drop;
-        }
-    };
-}
-
-macro_rules! impl_drop {
-    ($struct:ident) => {
-        impl Drop for $struct {
-            /// Resets the pin's mode and disables the built-in pull-up/pull-down
-            /// resistors if `reset_on_drop` is set to `true` (default).
-            fn drop(&mut self) {
-                if !self.reset_on_drop {
-                    return;
-                }
-
-                if let Some(prev_mode) = self.prev_mode {
-                    self.pin.set_mode(prev_mode);
-                }
-
-                if self.pud_mode != PullUpDown::Off {
-                    self.pin.set_pullupdown(PullUpDown::Off);
-                }
-            }
-        }
-    };
-}
-
 macro_rules! impl_eq {
     ($struct:ident) => {
         impl PartialEq for $struct {
@@ -284,12 +238,15 @@ macro_rules! impl_eq {
 pub struct Pin {
     pub(crate) pin: u8,
     gpio_state: Arc<GpioState>,
+    prev_mode: Mode,
+    reset_on_drop: bool,
 }
 
 impl Pin {
     #[inline]
     pub(crate) fn new(pin: u8, gpio_state: Arc<GpioState>) -> Pin {
-        Pin { pin, gpio_state }
+        let prev_mode = gpio_state.gpio_mem.mode(pin);
+        Pin { pin, gpio_state, prev_mode, reset_on_drop: true }
     }
 
     /// Returns the GPIO pin number.
@@ -329,12 +286,8 @@ impl Pin {
     /// Consumes the `Pin`, returns an [`InputPin`], sets its mode to [`Input`],
     /// and enables the pin's built-in pull-down resistor.
     ///
-    /// The pull-down resistor is disabled when `InputPin` goes out of scope if [`reset_on_drop`]
-    /// is set to `true` (default).
-    ///
     /// [`InputPin`]: struct.InputPin.html
     /// [`Input`]: enum.Mode.html#variant.Input
-    /// [`reset_on_drop`]: struct.InputPin.html#method.set_reset_on_drop
     #[inline]
     pub fn into_input_pulldown(self) -> InputPin {
         InputPin::new(self, PullUpDown::PullDown)
@@ -343,12 +296,8 @@ impl Pin {
     /// Consumes the `Pin`, returns an [`InputPin`], sets its mode to [`Input`],
     /// and enables the pin's built-in pull-up resistor.
     ///
-    /// The pull-up resistor is disabled when `InputPin` goes out of scope if [`reset_on_drop`]
-    /// is set to `true` (default).
-    ///
     /// [`InputPin`]: struct.InputPin.html
     /// [`Input`]: enum.Mode.html#variant.Input
-    /// [`reset_on_drop`]: struct.InputPin.html#method.set_reset_on_drop
     #[inline]
     pub fn into_input_pullup(self) -> InputPin {
         InputPin::new(self, PullUpDown::PullUp)
@@ -390,12 +339,44 @@ impl Pin {
             Level::High => self.set_high(),
         };
     }
+    
+    /// Returns the value of `reset_on_drop`.
+    pub fn reset_on_drop(&self) -> bool {
+        self.reset_on_drop
+    }
+
+    /// When enabled, resets the pin's mode to its original state and disables the
+    /// built-in pull-up/pull-down resistors when the pin goes out of scope.
+    /// By default, this is set to `true`.
+    ///
+    /// ## Note
+    ///
+    /// Drop methods aren't called when a process is abnormally terminated, for
+    /// instance when a user presses <kbd>Ctrl</kbd> + <kbd>C</kbd>, and the `SIGINT` signal
+    /// isn't caught. You can catch those using crates such as [`simple_signal`].
+    ///
+    /// [`simple_signal`]: https://crates.io/crates/simple-signal
+    pub fn set_reset_on_drop(&mut self, reset_on_drop: bool) {
+        self.reset_on_drop = reset_on_drop;
+    }
 }
 
 impl Drop for Pin {
+    /// Resets the pin's mode and disables the built-in pull-up/pull-down
+    /// resistors if `reset_on_drop` is set to `true` (default).
     fn drop(&mut self) {
         // Release taken pin
         self.gpio_state.pins_taken[self.pin as usize].store(false, Ordering::SeqCst);
+        if !self.reset_on_drop {
+            return;
+        }
+
+        if self.prev_mode != self.mode() {
+            self.set_mode(self.prev_mode);
+        }
+
+        // old pud_mode is unknown so choose prefer avoiding touching it
+        //self.set_pullupdown(PullUpDown::Off);
     }
 }
 
@@ -413,32 +394,19 @@ impl_eq!(Pin);
 #[derive(Debug)]
 pub struct AltPin {
     pub(crate) pin: Pin,
-    prev_mode: Option<Mode>,
-    reset_on_drop: bool,
-    pud_mode: PullUpDown,
 }
 impl AltPin {
     pub(crate) fn new(mut pin: Pin, mode: Mode) -> Self {
-        let prev_mode = pin.mode();
-
-        let prev_mode = if prev_mode == mode {
-            None
-        } else {
+        if pin.mode() != mode {
             pin.set_mode(mode);
-            Some(prev_mode)
-        };
+        }
 
         AltPin {
             pin,
-            prev_mode,
-            reset_on_drop: true,
-            pud_mode: PullUpDown::Off,
         }
     }
     impl_pin!();
-    impl_reset_on_drop!();
 }
-impl_drop!(AltPin);
 impl_eq!(AltPin);
 
 
@@ -464,31 +432,20 @@ impl_eq!(AltPin);
 #[derive(Debug)]
 pub struct InputPin {
     pub(crate) pin: Pin,
-    prev_mode: Option<Mode>,
     async_interrupt: Option<AsyncInterrupt>,
-    reset_on_drop: bool,
-    pud_mode: PullUpDown,
 }
 
 impl InputPin {
     pub(crate) fn new(mut pin: Pin, pud_mode: PullUpDown) -> InputPin {
-        let prev_mode = pin.mode();
-
-        let prev_mode = if prev_mode == Mode::Input {
-            None
-        } else {
+        if pin.mode() != Mode::Input {
             pin.set_mode(Mode::Input);
-            Some(prev_mode)
-        };
+        }
 
         pin.set_pullupdown(pud_mode);
 
         InputPin {
             pin,
-            prev_mode,
             async_interrupt: None,
-            reset_on_drop: true,
-            pud_mode,
         }
     }
 
@@ -586,11 +543,8 @@ impl InputPin {
 
         Ok(())
     }
-
-    impl_reset_on_drop!();
 }
 
-impl_drop!(InputPin);
 impl_eq!(InputPin);
 
 /// GPIO pin configured as output.
@@ -621,9 +575,6 @@ impl_eq!(InputPin);
 #[derive(Debug)]
 pub struct OutputPin {
     pin: Pin,
-    prev_mode: Option<Mode>,
-    reset_on_drop: bool,
-    pud_mode: PullUpDown,
     pub(crate) soft_pwm: Option<SoftPwm>,
     // Stores the softpwm frequency. Used for embedded_hal::PwmPin.
     #[cfg(feature = "hal")]
@@ -635,20 +586,12 @@ pub struct OutputPin {
 
 impl OutputPin {
     pub(crate) fn new(mut pin: Pin) -> OutputPin {
-        let prev_mode = pin.mode();
-
-        let prev_mode = if prev_mode == Mode::Output {
-            None
-        } else {
+        if pin.mode() != Mode::Output {
             pin.set_mode(Mode::Output);
-            Some(prev_mode)
-        };
+        }
 
         OutputPin {
             pin,
-            prev_mode,
-            reset_on_drop: true,
-            pud_mode: PullUpDown::Off,
             soft_pwm: None,
             #[cfg(feature = "hal")]
             frequency: 0.0,
@@ -675,9 +618,37 @@ impl OutputPin {
         self.pin.read() == Level::High
     }
 
+    /// Consumes the `OutPin`, returns an [`InputPin`], sets its mode to [`Input`],
+    /// and disables the pin's built-in pull-up/pull-down resistors.
+    ///
+    /// [`InputPin`]: struct.InputPin.html
+    /// [`Input`]: enum.Mode.html#variant.Input
+    #[inline]
+    pub fn into_input(self) -> InputPin {
+        InputPin::new(self.pin, PullUpDown::Off)
+    }
+
+    /// Consumes the `OutputPin`, returns an [`InputPin`], sets its mode to [`Input`],
+    /// and enables the pin's built-in pull-down resistor.
+    ///
+    /// [`InputPin`]: struct.InputPin.html
+    /// [`Input`]: enum.Mode.html#variant.Input
+    #[inline]
+    pub fn into_input_pulldown(self) -> InputPin {
+        InputPin::new(self.pin, PullUpDown::PullDown)
+    }
+
+    /// Consumes the `OutputPin`, returns an [`InputPin`], sets its mode to [`Input`],
+    /// and enables the pin's built-in pull-up resistor.
+    ///
+    /// [`InputPin`]: struct.InputPin.html
+    /// [`Input`]: enum.Mode.html#variant.Input
+    #[inline]
+    pub fn into_input_pullup(self) -> InputPin {
+        InputPin::new(self.pin, PullUpDown::PullUp)
+    }
+
     impl_output!();
-    impl_reset_on_drop!();
 }
 
-impl_drop!(OutputPin);
 impl_eq!(OutputPin);
