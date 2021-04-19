@@ -28,19 +28,19 @@
 //!
 //! GPIO pins are retrieved from a [`Gpio`] instance by their BCM GPIO pin number by calling
 //! [`Gpio::get`]. The returned unconfigured [`Pin`] can be used to read the pin's
-//! mode and logic level. Converting the [`Pin`] to an [`InputPin`], [`OutputPin`] or
-//! [`IoPin`] through the various `into_` methods available on [`Pin`] configures the
+//! mode and logic level. Converting the [`Pin`] to an [`InputPin`] or [`OutputPin`]
+//! through the various `into_` methods available on [`Pin`] configures the
 //! appropriate mode, and provides access to additional methods relevant to the selected pin mode.
 //!
 //! Retrieving a GPIO pin with [`Gpio::get`] grants access to the pin through an owned [`Pin`]
 //! instance. If the pin is already in use, or the GPIO peripheral doesn't expose a pin with
 //! the specified number, [`Gpio::get`] returns `Err(`[`Error::PinNotAvailable`]`)`. After a [`Pin`]
-//! (or a derived [`InputPin`], [`OutputPin`] or [`IoPin`]) goes out of scope, it can be
+//! (or a derived [`InputPin`] or [`OutputPin`]) goes out of scope, it can be
 //! retrieved again through another [`Gpio::get`] call.
 //!
 //! By default, pins are reset to their original state when they go out of scope.
-//! Use [`InputPin::set_reset_on_drop(false)`], [`OutputPin::set_reset_on_drop(false)`]
-//! or [`IoPin::set_reset_on_drop(false)`], respectively, to disable this behavior.
+//! Use [`InputPin::set_reset_on_drop(false)`] or [`OutputPin::set_reset_on_drop(false)`],
+//! respectively, to disable this behavior.
 //! Note that `drop` methods aren't called when a process is abnormally terminated (for
 //! instance when a `SIGINT` signal isn't caught).
 //!
@@ -59,7 +59,7 @@
 //!
 //! ## Software-based PWM
 //!
-//! [`OutputPin`] and [`IoPin`] feature a software-based PWM implementation. The PWM signal is
+//! [`OutputPin`] features a software-based PWM implementation. The PWM signal is
 //! emulated by toggling the pin's output state on a separate thread, combined with sleep and
 //! busy-waiting.
 //!
@@ -128,8 +128,6 @@
 //! [`InputPin::set_async_interrupt`]: struct.InputPin.html#method.set_async_interrupt
 //! [`OutputPin`]: struct.OutputPin.html
 //! [`OutputPin::set_reset_on_drop(false)`]: struct.OutputPin.html#method.set_reset_on_drop
-//! [`IoPin`]: struct.IoPin.html
-//! [`IoPin::set_reset_on_drop(false)`]: struct.IoPin.html#method.set_reset_on_drop
 //! [`Pwm`]: ../pwm/struct.Pwm.html
 
 use std::error;
@@ -157,7 +155,7 @@ mod soft_pwm;
 
 use crate::system;
 
-pub use self::pin::{InputPin, IoPin, OutputPin, Pin};
+pub use self::pin::{InputPin, OutputPin, AltPin, Pin};
 
 /// Errors that can occur when accessing the GPIO peripheral.
 #[derive(Debug)]
@@ -177,13 +175,12 @@ pub enum Error {
     ///
     /// The pin is already in use elsewhere in your application, or the GPIO peripheral
     /// doesn't expose a pin with the specified number. If the pin is currently in use, you
-    /// can retrieve it again after the [`Pin`] (or a derived [`InputPin`], [`OutputPin`] or
-    /// [`IoPin`]) instance goes out of scope.
+    /// can retrieve it again after the [`Pin`] (or a derived [`InputPin`] or [`OutputPin`])
+    /// instance goes out of scope.
     ///
     /// [`Pin`]: struct.Pin.html
     /// [`InputPin`]: struct.InputPin.html
     /// [`OutputPin`]: struct.OutputPin.html
-    /// [`IoPin`]: struct.IoPin.html
     PinNotAvailable(u8),
     /// Permission denied when opening `/dev/gpiomem`, `/dev/mem` or `/dev/gpiochipN` for
     /// read/write access.
@@ -393,13 +390,12 @@ impl Gpio {
     /// Retrieving a GPIO pin grants access to the pin through an owned [`Pin`] instance.
     /// If the pin is already in use, or the GPIO peripheral doesn't expose a pin with the
     /// specified number, `get` returns `Err(`[`Error::PinNotAvailable`]`)`. After a [`Pin`]
-    /// (or a derived [`InputPin`], [`OutputPin`] or [`IoPin`]) goes out of scope, it
+    /// (or a derived [`InputPin`] or [`OutputPin`]) goes out of scope, it
     /// can be retrieved again through another `get` call.
     ///
     /// [`Pin`]: struct.Pin.html
     /// [`InputPin`]: struct.InputPin.html
     /// [`OutputPin`]: struct.OutputPin.html
-    /// [`IoPin`]: struct.IoPin.html
     /// [`Error::PinNotAvailable`]: enum.Error.html#variant.PinNotAvailable
     pub fn get(&self, pin: u8) -> Result<Pin> {
         if pin as usize >= pin::MAX {

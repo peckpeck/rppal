@@ -164,7 +164,7 @@ use std::time::Duration;
 use libc::{c_int, O_NOCTTY, O_NONBLOCK};
 use libc::{TIOCM_CAR, TIOCM_CTS, TIOCM_DSR, TIOCM_DTR, TIOCM_RNG, TIOCM_RTS};
 
-use crate::gpio::{self, Gpio, IoPin, Mode};
+use crate::gpio::{self, Gpio, Mode, AltPin};
 use crate::system::{self, DeviceInfo, Model};
 
 #[cfg(feature = "hal")]
@@ -405,7 +405,7 @@ struct UartInner {
     device: File,
     fd: RawFd,
     rtscts_mode: Option<(Mode, Mode)>,
-    rtscts_pins: Option<(IoPin, IoPin)>,
+    rtscts_pins: Option<(AltPin, AltPin)>,
     blocking_read: bool,
     blocking_write: bool,
     baud_rate: u32,
@@ -744,8 +744,8 @@ impl Uart {
                     (GPIO_RTS, GPIO_CTS)
                 };
 
-                let pin_rts = gpio.get(gpio_rts)?.into_io(rts_mode);
-                let pin_cts = gpio.get(gpio_cts)?.into_io(cts_mode);
+                let pin_rts = gpio.get(gpio_rts)?.into_alt(rts_mode);
+                let pin_cts = gpio.get(gpio_cts)?.into_alt(cts_mode);
 
                 self.inner.rtscts_pins = Some((pin_rts, pin_cts));
             }
