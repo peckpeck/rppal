@@ -39,8 +39,7 @@
 //! retrieved again through another [`Gpio::get`] call.
 //!
 //! By default, pins are reset to their original state when they go out of scope.
-//! Use [`InputPin::set_reset_on_drop(false)`] or [`OutputPin::set_reset_on_drop(false)`],
-//! respectively, to disable this behavior.
+//! Use [`Pin::set_reset_on_drop(false)`] to disable this behavior.
 //! Note that `drop` methods aren't called when a process is abnormally terminated (for
 //! instance when a `SIGINT` signal isn't caught).
 //!
@@ -122,12 +121,10 @@
 //! [`Gpio::poll_interrupts`]: struct.Gpio.html#method.poll_interrupts
 //! [`Pin`]: struct.Pin.html
 //! [`InputPin`]: struct.InputPin.html
-//! [`InputPin::set_reset_on_drop(false)`]: struct.InputPin.html#method.set_reset_on_drop
 //! [`InputPin::set_interrupt`]: struct.InputPin.html#method.set_interrupt
 //! [`InputPin::poll_interrupt`]: struct.InputPin.html#method.poll_interrupt
 //! [`InputPin::set_async_interrupt`]: struct.InputPin.html#method.set_async_interrupt
 //! [`OutputPin`]: struct.OutputPin.html
-//! [`OutputPin::set_reset_on_drop(false)`]: struct.OutputPin.html#method.set_reset_on_drop
 //! [`Pwm`]: ../pwm/struct.Pwm.html
 
 use std::error;
