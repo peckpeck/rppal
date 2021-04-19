@@ -268,7 +268,7 @@ macro_rules! impl_eq {
 /// `Pin`s are constructed by retrieving them using [`Gpio::get`].
 ///
 /// An unconfigured `Pin` can be used to read the pin's mode and logic level.
-/// Converting the `Pin` to an [`InputPin`], [`OutputPin`] or [`IoPin`] through the
+/// Converting the `Pin` to an [`InputPin`] or [`OutputPin`] through the
 /// various `into_` methods available on `Pin` configures the appropriate mode, and
 /// provides access to additional methods relevant to the selected pin mode.
 ///
@@ -280,7 +280,6 @@ macro_rules! impl_eq {
 /// [`Gpio::get`]: struct.Gpio.html#method.get
 /// [`InputPin`]: struct.InputPin.html
 /// [`OutputPin`]: struct.OutputPin.html
-/// [`IoPin`]: struct.IoPin.html
 #[derive(Debug)]
 pub struct Pin {
     pub(crate) pin: u8,
@@ -313,6 +312,10 @@ impl Pin {
         self.gpio_state.gpio_mem.level(self.pin)
     }
 
+    #[inline]
+    pub fn into_alt(self, mode: Mode) -> AltPin {
+        AltPin::new(self, mode)
+    }
     /// Consumes the `Pin`, returns an [`InputPin`], sets its mode to [`Input`],
     /// and disables the pin's built-in pull-up/pull-down resistors.
     ///
@@ -360,15 +363,6 @@ impl Pin {
         OutputPin::new(self)
     }
 
-    /// Consumes the `Pin`, returns an [`IoPin`] and sets its mode to the specified mode.
-    ///
-    /// [`IoPin`]: struct.IoPin.html
-    /// [`Mode`]: enum.Mode.html
-    #[inline]
-    pub fn into_io(self, mode: Mode) -> IoPin {
-        IoPin::new(self, mode)
-    }
-
     #[inline]
     pub(crate) fn set_mode(&mut self, mode: Mode) {
         self.gpio_state.gpio_mem.set_mode(self.pin, mode);
@@ -406,6 +400,47 @@ impl Drop for Pin {
 }
 
 impl_eq!(Pin);
+
+/// GPIO pin configured in alternate mode.
+///
+/// There are 5 altername mode for the pins. They are used to let the hardware
+/// control the ping itself, so there is no pin control in `AltPin`.
+///
+/// `AltPin`s are constructed by converting a [`Pin`] using [`Pin::into_alt`].
+///
+/// [`Pin`]: struct.Pin.html
+/// [`Pin::into_alt`]: struct.Pin.html#method.into_alt
+#[derive(Debug)]
+pub struct AltPin {
+    pub(crate) pin: Pin,
+    prev_mode: Option<Mode>,
+    reset_on_drop: bool,
+    pud_mode: PullUpDown,
+}
+impl AltPin {
+    pub(crate) fn new(mut pin: Pin, mode: Mode) -> Self {
+        let prev_mode = pin.mode();
+
+        let prev_mode = if prev_mode == mode {
+            None
+        } else {
+            pin.set_mode(mode);
+            Some(prev_mode)
+        };
+
+        AltPin {
+            pin,
+            prev_mode,
+            reset_on_drop: true,
+            pud_mode: PullUpDown::Off,
+        }
+    }
+    impl_pin!();
+    impl_reset_on_drop!();
+}
+impl_drop!(AltPin);
+impl_eq!(AltPin);
+
 
 /// GPIO pin configured as input.
 ///
@@ -646,109 +681,3 @@ impl OutputPin {
 
 impl_drop!(OutputPin);
 impl_eq!(OutputPin);
-
-/// GPIO pin that can be (re)configured for any mode or alternate function.
-///
-/// `IoPin`s are constructed by converting a [`Pin`] using [`Pin::into_io`].
-/// The pin's mode is automatically set to the specified mode.
-///
-/// An `IoPin` can be reconfigured for any available mode. Depending on the
-/// mode, some methods may not have any effect. For instance, calling a method that
-/// alters the pin's output state won't cause any changes when the pin's mode is set
-/// to [`Input`].
-///
-/// The `embedded-hal` [`digital::OutputPin`] and [`PwmPin`] trait implementations for `IoPin`
-/// can be enabled by specifying the optional `hal` feature in the dependency
-/// declaration for the `rppal` crate.
-///
-/// The `unproven` `embedded-hal` [`digital::InputPin`], [`digital::StatefulOutputPin`],
-/// [`digital::ToggleableOutputPin`] and [`Pwm`] trait implementations for `IoPin` can be enabled
-/// by specifying the optional `hal-unproven` feature in the dependency declaration for
-/// the `rppal` crate.
-///
-/// [`digital::InputPin`]: ../../embedded_hal/digital/trait.InputPin.html
-/// [`digital::StatefulOutputPin`]: ../../embedded_hal/digital/trait.StatefulOutputPin.html
-/// [`digital::ToggleableOutputPin`]: ../../embedded_hal/digital/trait.ToggleableOutputPin.html
-/// [`Pwm`]: ../../embedded_hal/trait.Pwm.html
-/// [`Pin`]: struct.Pin.html
-/// [`Input`]: enum.Mode.html#variant.Input
-/// [`Pin::into_io`]: struct.Pin.html#method.into_io
-/// [`digital::OutputPin`]: ../../embedded_hal/digital/trait.OutputPin.html
-/// [`PwmPin`]: ../../embedded_hal/trait.PwmPin.html
-#[derive(Debug)]
-pub struct IoPin {
-    pin: Pin,
-    mode: Mode,
-    prev_mode: Option<Mode>,
-    reset_on_drop: bool,
-    pud_mode: PullUpDown,
-    pub(crate) soft_pwm: Option<SoftPwm>,
-    // Stores the softpwm frequency. Used for embedded_hal::PwmPin.
-    #[cfg(feature = "hal")]
-    pub(crate) frequency: f64,
-    // Stores the softpwm duty cycle. Used for embedded_hal::PwmPin.
-    #[cfg(feature = "hal")]
-    pub(crate) duty_cycle: f64,
-}
-
-impl IoPin {
-    pub(crate) fn new(mut pin: Pin, mode: Mode) -> IoPin {
-        let prev_mode = pin.mode();
-
-        let prev_mode = if prev_mode == mode {
-            None
-        } else {
-            pin.set_mode(mode);
-            Some(prev_mode)
-        };
-
-        IoPin {
-            pin,
-            mode,
-            prev_mode,
-            reset_on_drop: true,
-            pud_mode: PullUpDown::Off,
-            soft_pwm: None,
-            #[cfg(feature = "hal")]
-            frequency: 0.0,
-            #[cfg(feature = "hal")]
-            duty_cycle: 0.0,
-        }
-    }
-
-    impl_pin!();
-
-    /// Returns the pin's mode.
-    #[inline]
-    pub fn mode(&self) -> Mode {
-        self.pin.mode()
-    }
-
-    /// Sets the pin's mode.
-    #[inline]
-    pub fn set_mode(&mut self, mode: Mode) {
-        // If self.prev_mode is set to None, that means the
-        // requested mode during construction was the same as
-        // the current mode. Save that mode if we're changing
-        // it to something else now, so we can reset it on drop.
-        if self.prev_mode.is_none() && mode != self.mode {
-            self.prev_mode = Some(self.mode);
-        }
-
-        self.pin.set_mode(mode);
-    }
-
-    /// Configures the built-in pull-up/pull-down resistors.
-    #[inline]
-    pub fn set_pullupdown(&mut self, pud: PullUpDown) {
-        self.pin.set_pullupdown(pud);
-        self.pud_mode = pud;
-    }
-
-    impl_input!();
-    impl_output!();
-    impl_reset_on_drop!();
-}
-
-impl_drop!(IoPin);
-impl_eq!(IoPin);
