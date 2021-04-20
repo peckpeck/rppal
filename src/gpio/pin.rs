@@ -44,155 +44,6 @@ macro_rules! impl_pin {
     };
 }
 
-macro_rules! impl_input {
-    () => {
-        /// Reads the pin's logic level.
-        #[inline]
-        pub fn read(&self) -> Level {
-            self.pin.read()
-        }
-
-        /// Reads the pin's logic level, and returns `true` if it's set to [`Low`].
-        ///
-        /// [`Low`]: enum.Level.html#variant.Low
-        #[inline]
-        pub fn is_low(&self) -> bool {
-            self.pin.read() == Level::Low
-        }
-
-        /// Reads the pin's logic level, and returns `true` if it's set to [`High`].
-        ///
-        /// [`High`]: enum.Level.html#variant.High
-        #[inline]
-        pub fn is_high(&self) -> bool {
-            self.pin.read() == Level::High
-        }
-    };
-}
-
-macro_rules! impl_output {
-    () => {
-        /// Sets the pin's output state.
-        #[inline]
-        pub fn write(&mut self, level: Level) {
-            self.pin.write(level)
-        }
-
-        /// Sets the pin's output state to [`Low`].
-        ///
-        /// [`Low`]: enum.Level.html#variant.Low
-        #[inline]
-        pub fn set_low(&mut self) {
-            self.pin.set_low()
-        }
-
-        /// Sets the pin's output state to [`High`].
-        ///
-        /// [`High`]: enum.Level.html#variant.High
-        #[inline]
-        pub fn set_high(&mut self) {
-            self.pin.set_high()
-        }
-
-        /// Toggles the pin's output state between [`Low`] and [`High`].
-        ///
-        /// [`Low`]: enum.Level.html#variant.Low
-        /// [`High`]: enum.Level.html#variant.High
-        #[inline]
-        pub fn toggle(&mut self) {
-            if self.pin.read() == Level::Low {
-                self.set_high();
-            } else {
-                self.set_low();
-            }
-        }
-
-        /// Configures a software-based PWM signal.
-        ///
-        /// `period` indicates the time it takes to complete one cycle.
-        ///
-        /// `pulse_width` indicates the amount of time the PWM signal is active during a
-        /// single period.
-        ///
-        /// Software-based PWM is inherently inaccurate on a multi-threaded OS due to
-        /// scheduling/preemption. If an accurate or faster PWM signal is required, use the
-        /// hardware [`Pwm`] peripheral instead. More information can be found [here].
-        ///
-        /// If `set_pwm` is called when a PWM thread is already active, the existing thread
-        /// will be reconfigured at the end of the current cycle.
-        ///
-        /// [`Pwm`]: ../pwm/struct.Pwm.html
-        /// [here]: index.html#software-based-pwm
-        pub fn set_pwm(&mut self, period: Duration, pulse_width: Duration) -> Result<()> {
-            if let Some(ref mut soft_pwm) = self.soft_pwm {
-                soft_pwm.reconfigure(period, pulse_width);
-            } else {
-                self.soft_pwm = Some(SoftPwm::new(
-                    self.pin.pin,
-                    self.pin.gpio_state.clone(),
-                    period,
-                    pulse_width,
-                ));
-            }
-
-            // Store frequency/duty cycle for the embedded-hal PwmPin implementation.
-            #[cfg(feature = "hal")]
-            {
-                let period_s =
-                    period.as_secs() as f64 + (f64::from(period.subsec_nanos()) / NANOS_PER_SEC);
-                let pulse_width_s = pulse_width.as_secs() as f64
-                    + (f64::from(pulse_width.subsec_nanos()) / NANOS_PER_SEC);
-
-                if period_s > 0.0 {
-                    self.frequency = 1.0 / period_s;
-                    self.duty_cycle = (pulse_width_s / period_s).min(1.0);
-                } else {
-                    self.frequency = 0.0;
-                    self.duty_cycle = 0.0;
-                }
-            }
-
-            Ok(())
-        }
-
-        /// Configures a software-based PWM signal.
-        ///
-        /// `set_pwm_frequency` is a convenience method that converts `frequency` to a period and
-        /// `duty_cycle` to a pulse width, and then calls [`set_pwm`].
-        ///
-        /// `frequency` is specified in hertz (Hz).
-        ///
-        /// `duty_cycle` is specified as a floating point value between `0.0` (0%) and `1.0` (100%).
-        ///
-        /// [`set_pwm`]: #method.set_pwm
-        pub fn set_pwm_frequency(&mut self, frequency: f64, duty_cycle: f64) -> Result<()> {
-            let period = if frequency <= 0.0 {
-                0.0
-            } else {
-                (1.0 / frequency) * NANOS_PER_SEC
-            };
-            let pulse_width = period * duty_cycle.max(0.0).min(1.0);
-
-            self.set_pwm(
-                Duration::from_nanos(period as u64),
-                Duration::from_nanos(pulse_width as u64),
-            )
-        }
-
-        /// Stops a previously configured software-based PWM signal.
-        ///
-        /// The thread responsible for emulating the PWM signal is stopped at the end
-        /// of the current cycle.
-        pub fn clear_pwm(&mut self) -> Result<()> {
-            if let Some(mut soft_pwm) = self.soft_pwm.take() {
-                soft_pwm.stop()?;
-            }
-
-            Ok(())
-        }
-    };
-}
-
 macro_rules! impl_eq {
     ($struct:ident) => {
         impl PartialEq for $struct {
@@ -450,7 +301,28 @@ impl InputPin {
     }
 
     impl_pin!();
-    impl_input!();
+
+    /// Reads the pin's logic level.
+    #[inline]
+    pub fn read(&self) -> Level {
+        self.pin.read()
+    }
+
+    /// Reads the pin's logic level, and returns `true` if it's set to [`Low`].
+    ///
+    /// [`Low`]: enum.Level.html#variant.Low
+    #[inline]
+    pub fn is_low(&self) -> bool {
+        self.pin.read() == Level::Low
+    }
+
+    /// Reads the pin's logic level, and returns `true` if it's set to [`High`].
+    ///
+    /// [`High`]: enum.Level.html#variant.High
+    #[inline]
+    pub fn is_high(&self) -> bool {
+        self.pin.read() == Level::High
+    }
 
     /// Configures a synchronous interrupt trigger.
     ///
@@ -618,37 +490,124 @@ impl OutputPin {
         self.pin.read() == Level::High
     }
 
-    /// Consumes the `OutPin`, returns an [`InputPin`], sets its mode to [`Input`],
-    /// and disables the pin's built-in pull-up/pull-down resistors.
-    ///
-    /// [`InputPin`]: struct.InputPin.html
-    /// [`Input`]: enum.Mode.html#variant.Input
+    /// Sets the pin's output state.
     #[inline]
-    pub fn into_input(self) -> InputPin {
-        InputPin::new(self.pin, PullUpDown::Off)
+    pub fn write(&mut self, level: Level) {
+        self.pin.write(level)
     }
 
-    /// Consumes the `OutputPin`, returns an [`InputPin`], sets its mode to [`Input`],
-    /// and enables the pin's built-in pull-down resistor.
+    /// Sets the pin's output state to [`Low`].
     ///
-    /// [`InputPin`]: struct.InputPin.html
-    /// [`Input`]: enum.Mode.html#variant.Input
+    /// [`Low`]: enum.Level.html#variant.Low
     #[inline]
-    pub fn into_input_pulldown(self) -> InputPin {
-        InputPin::new(self.pin, PullUpDown::PullDown)
+    pub fn set_low(&mut self) {
+        self.pin.set_low()
     }
 
-    /// Consumes the `OutputPin`, returns an [`InputPin`], sets its mode to [`Input`],
-    /// and enables the pin's built-in pull-up resistor.
+    /// Sets the pin's output state to [`High`].
     ///
-    /// [`InputPin`]: struct.InputPin.html
-    /// [`Input`]: enum.Mode.html#variant.Input
+    /// [`High`]: enum.Level.html#variant.High
     #[inline]
-    pub fn into_input_pullup(self) -> InputPin {
-        InputPin::new(self.pin, PullUpDown::PullUp)
+    pub fn set_high(&mut self) {
+        self.pin.set_high()
     }
 
-    impl_output!();
+    /// Toggles the pin's output state between [`Low`] and [`High`].
+    ///
+    /// [`Low`]: enum.Level.html#variant.Low
+    /// [`High`]: enum.Level.html#variant.High
+    #[inline]
+    pub fn toggle(&mut self) {
+        if self.pin.read() == Level::Low {
+            self.set_high();
+        } else {
+            self.set_low();
+        }
+    }
+
+    /// Configures a software-based PWM signal.
+    ///
+    /// `period` indicates the time it takes to complete one cycle.
+    ///
+    /// `pulse_width` indicates the amount of time the PWM signal is active during a
+    /// single period.
+    ///
+    /// Software-based PWM is inherently inaccurate on a multi-threaded OS due to
+    /// scheduling/preemption. If an accurate or faster PWM signal is required, use the
+    /// hardware [`Pwm`] peripheral instead. More information can be found [here].
+    ///
+    /// If `set_pwm` is called when a PWM thread is already active, the existing thread
+    /// will be reconfigured at the end of the current cycle.
+    ///
+    /// [`Pwm`]: ../pwm/struct.Pwm.html
+    /// [here]: index.html#software-based-pwm
+    pub fn set_pwm(&mut self, period: Duration, pulse_width: Duration) -> Result<()> {
+        if let Some(ref mut soft_pwm) = self.soft_pwm {
+            soft_pwm.reconfigure(period, pulse_width);
+        } else {
+            self.soft_pwm = Some(SoftPwm::new(
+                self.pin.pin,
+                self.pin.gpio_state.clone(),
+                period,
+                pulse_width,
+            ));
+        }
+
+        // Store frequency/duty cycle for the embedded-hal PwmPin implementation.
+        #[cfg(feature = "hal")]
+        {
+            let period_s =
+                period.as_secs() as f64 + (f64::from(period.subsec_nanos()) / NANOS_PER_SEC);
+            let pulse_width_s = pulse_width.as_secs() as f64
+                + (f64::from(pulse_width.subsec_nanos()) / NANOS_PER_SEC);
+
+            if period_s > 0.0 {
+                self.frequency = 1.0 / period_s;
+                self.duty_cycle = (pulse_width_s / period_s).min(1.0);
+            } else {
+                self.frequency = 0.0;
+                self.duty_cycle = 0.0;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Configures a software-based PWM signal.
+    ///
+    /// `set_pwm_frequency` is a convenience method that converts `frequency` to a period and
+    /// `duty_cycle` to a pulse width, and then calls [`set_pwm`].
+    ///
+    /// `frequency` is specified in hertz (Hz).
+    ///
+    /// `duty_cycle` is specified as a floating point value between `0.0` (0%) and `1.0` (100%).
+    ///
+    /// [`set_pwm`]: #method.set_pwm
+    pub fn set_pwm_frequency(&mut self, frequency: f64, duty_cycle: f64) -> Result<()> {
+        let period = if frequency <= 0.0 {
+            0.0
+        } else {
+            (1.0 / frequency) * NANOS_PER_SEC
+        };
+        let pulse_width = period * duty_cycle.max(0.0).min(1.0);
+
+        self.set_pwm(
+            Duration::from_nanos(period as u64),
+            Duration::from_nanos(pulse_width as u64),
+        )
+    }
+
+    /// Stops a previously configured software-based PWM signal.
+    ///
+    /// The thread responsible for emulating the PWM signal is stopped at the end
+    /// of the current cycle.
+    pub fn clear_pwm(&mut self) -> Result<()> {
+        if let Some(mut soft_pwm) = self.soft_pwm.take() {
+            soft_pwm.stop()?;
+        }
+
+        Ok(())
+    }
 }
 
 impl_eq!(OutputPin);
