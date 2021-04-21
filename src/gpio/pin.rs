@@ -32,6 +32,43 @@ const NANOS_PER_SEC: f64 = 1_000_000_000.0;
 // exposed through the Pi's GPIO header depends on the model.
 pub const MAX: usize = 54;
 
+// inner is private so you cannot call extract_pin from outside
+mod inner {
+    pub trait HasPin {
+        fn extract_pin(self) -> super::Pin;
+    }
+}
+
+pub trait PinConvert: inner::HasPin + Sized {
+    /// Consumes the `Pin`, returns an [`AltPin`], sets its mode to [̀ Mode`],
+    /// and disables the pin's built-in pull-up/pull-down resistors.
+    ///
+    /// [`AltPin`]: struct.AltPin.html
+    /// [`Mode`]: enum.Mode.html
+    fn into_alt(self, mode: Mode) -> AltPin { AltPin::new(self.extract_pin(), mode) }
+
+    /// Consumes the `Pin`, returns an [`InputPin`], sets its mode to [`Input`],
+    /// and change the pullup mode to pud_mode.
+    ///
+    /// [`InputPin`]: struct.InputPin.html
+    /// [`Input`]: enum.Mode.html#variant.Input
+    fn into_input(self, pud_mode: PullUpDown) -> InputPin { InputPin::new(self.extract_pin(), pud_mode) }
+
+    /// Consumes the `Pin`, returns an [`OutputPin`] and sets its mode to [`Output`].
+    ///
+    /// [`OutputPin`]: struct.OutputPin.html
+    /// [`Output`]: enum.Mode.html#variant.Output
+    fn into_output(self) -> OutputPin { OutputPin::new(self.extract_pin()) }
+}
+
+macro_rules! impl_has_pin {
+    ($struct:ident) => {
+        impl inner::HasPin for $struct {
+            fn extract_pin(self) -> Pin { self.pin }
+        }
+    };
+}
+
 macro_rules! impl_pin {
     () => {
         /// Returns the GPIO pin number.
@@ -41,7 +78,7 @@ macro_rules! impl_pin {
         pub fn pin(&self) -> u8 {
             self.pin.pin
         }
-    };
+    }
 }
 
 macro_rules! impl_eq {
@@ -121,49 +158,6 @@ impl Pin {
     }
 
     #[inline]
-    pub fn into_alt(self, mode: Mode) -> AltPin {
-        AltPin::new(self, mode)
-    }
-    /// Consumes the `Pin`, returns an [`InputPin`], sets its mode to [`Input`],
-    /// and disables the pin's built-in pull-up/pull-down resistors.
-    ///
-    /// [`InputPin`]: struct.InputPin.html
-    /// [`Input`]: enum.Mode.html#variant.Input
-    #[inline]
-    pub fn into_input(self) -> InputPin {
-        InputPin::new(self, PullUpDown::Off)
-    }
-
-    /// Consumes the `Pin`, returns an [`InputPin`], sets its mode to [`Input`],
-    /// and enables the pin's built-in pull-down resistor.
-    ///
-    /// [`InputPin`]: struct.InputPin.html
-    /// [`Input`]: enum.Mode.html#variant.Input
-    #[inline]
-    pub fn into_input_pulldown(self) -> InputPin {
-        InputPin::new(self, PullUpDown::PullDown)
-    }
-
-    /// Consumes the `Pin`, returns an [`InputPin`], sets its mode to [`Input`],
-    /// and enables the pin's built-in pull-up resistor.
-    ///
-    /// [`InputPin`]: struct.InputPin.html
-    /// [`Input`]: enum.Mode.html#variant.Input
-    #[inline]
-    pub fn into_input_pullup(self) -> InputPin {
-        InputPin::new(self, PullUpDown::PullUp)
-    }
-
-    /// Consumes the `Pin`, returns an [`OutputPin`] and sets its mode to [`Output`].
-    ///
-    /// [`OutputPin`]: struct.OutputPin.html
-    /// [`Output`]: enum.Mode.html#variant.Output
-    #[inline]
-    pub fn into_output(self) -> OutputPin {
-        OutputPin::new(self)
-    }
-
-    #[inline]
     pub(crate) fn set_mode(&mut self, mode: Mode) {
         self.gpio_state.gpio_mem.set_mode(self.pin, mode);
     }
@@ -226,12 +220,17 @@ impl Drop for Pin {
             self.set_mode(self.prev_mode);
         }
 
-        // old pud_mode is unknown so choose prefer avoiding touching it
+        // old pud_mode is unknown so we choose to avoid touching it
         //self.set_pullupdown(PullUpDown::Off);
     }
 }
 
 impl_eq!(Pin);
+// Allow PinConvert implementation
+impl inner::HasPin for Pin {
+    fn extract_pin(self) -> Pin { self }
+}
+impl PinConvert for Pin {}
 
 /// GPIO pin configured in alternate mode.
 ///
@@ -259,13 +258,13 @@ impl AltPin {
     impl_pin!();
 }
 impl_eq!(AltPin);
-
+impl_has_pin!(AltPin);
+impl PinConvert for AltPin {}
 
 /// GPIO pin configured as input.
 ///
-/// `InputPin`s are constructed by converting a [`Pin`] using [`Pin::into_input`],
-/// [`Pin::into_input_pullup`] or [`Pin::into_input_pulldown`]. The pin's mode is
-/// automatically set to [`Input`].
+/// `InputPin`s are constructed by converting a [`Pin`] using [`Pin::into_input`].
+/// The pin's mode is automatically set to [`Input`].
 ///
 /// An `InputPin` can be used to read a pin's logic level, or (a)synchronously poll for
 /// interrupt trigger events.
@@ -278,8 +277,6 @@ impl_eq!(AltPin);
 /// [`Pin`]: struct.Pin.html
 /// [`Input`]: enum.Mode.html#variant.Input
 /// [`Pin::into_input`]: struct.Pin.html#method.into_input
-/// [`Pin::into_input_pullup`]: struct.Pin.html#method.into_input_pullup
-/// [`Pin::into_input_pulldown`]: struct.Pin.html#method.into_input_pulldown
 #[derive(Debug)]
 pub struct InputPin {
     pub(crate) pin: Pin,
@@ -418,6 +415,8 @@ impl InputPin {
 }
 
 impl_eq!(InputPin);
+impl_has_pin!(InputPin);
+impl PinConvert for InputPin {}
 
 /// GPIO pin configured as output.
 ///
@@ -611,3 +610,5 @@ impl OutputPin {
 }
 
 impl_eq!(OutputPin);
+impl_has_pin!(OutputPin);
+impl PinConvert for OutputPin {}

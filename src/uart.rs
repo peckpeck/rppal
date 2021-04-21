@@ -164,7 +164,7 @@ use std::time::Duration;
 use libc::{c_int, O_NOCTTY, O_NONBLOCK};
 use libc::{TIOCM_CAR, TIOCM_CTS, TIOCM_DSR, TIOCM_DTR, TIOCM_RNG, TIOCM_RTS};
 
-use crate::gpio::{self, Gpio, Mode, AltPin};
+use crate::gpio::{self, Gpio, Mode, AltPin, PinConvert};
 use crate::system::{self, DeviceInfo, Model};
 
 #[cfg(feature = "hal")]
